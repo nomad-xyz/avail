@@ -2,7 +2,6 @@ use codec::{Codec, Decode, Encode};
 use scale_info::TypeInfo;
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "std")]
 use sp_runtime::traits::Member;
 use sp_std::vec::Vec;
 
@@ -10,7 +9,7 @@ use crate::traits::ExtrinsicsWithCommitment;
 
 /// Customized extrinsics root to save the commitment.
 #[derive(PartialEq, Eq, Clone, sp_core::RuntimeDebug, Default, Encode, Decode, TypeInfo)]
-#[cfg_attr(feature = "std", derive(Deserialize))]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "std", serde(rename_all = "camelCase"))]
 #[cfg_attr(feature = "std", serde(deny_unknown_fields))]
 pub struct KateCommitment<HashOutput> {
@@ -24,16 +23,6 @@ pub struct KateCommitment<HashOutput> {
 	pub cols: u16,
 	/// The merkle root of the data submitted
 	pub data_root: [u8; 32]
-}
-
-#[cfg(feature = "std")]
-impl<HashOutput: KateExtrinsicHash> Serialize for KateCommitment<HashOutput> {
-	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-	where
-		S: serde::Serializer,
-	{
-		self.using_encoded(|bytes| sp_core::bytes::serialize(bytes, serializer))
-	}
 }
 
 /// Marker trait for types `T` that can be use as `Hash` in `ExtrinsicsRoot`.
