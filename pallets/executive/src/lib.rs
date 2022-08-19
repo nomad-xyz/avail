@@ -596,6 +596,157 @@ where
 		<AllPallets as OffchainWorker<System::BlockNumber>>::offchain_worker(*header.number())
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use da_primitives::{asdr::DataLookup, KateCommitment};
+	use frame_support::parameter_types;
+	use frame_system::tests::TestRandomness;
+	use hex_literal::hex;
+	use sp_io::TestExternalities;
+	use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
+
+	use super::*;
+
+	pub struct RuntimeVersion;
+	impl frame_support::traits::Get<sp_version::RuntimeVersion> for RuntimeVersion {
+		fn get() -> sp_version::RuntimeVersion { RUNTIME_VERSION.with(|v| v.borrow().clone()) }
+	}
+
+	pub struct HeaderBuilder {}
+	impl frame_system::header_builder::HeaderBuilder for HeaderBuilder {
+		type Header = da_primitives::Header<BlockNumber, BlakeTwo256>;
+
+		fn build(
+			_app_extrinsics: Vec<da_primitives::asdr::AppExtrinsic>,
+			parent_hash: <Self::Header as sp_runtime::traits::Header>::Hash,
+			digest: frame_system::header_builder::DigestWrapper,
+			_block_length: frame_system::limits::BlockLength,
+			block_number: <Self::Header as sp_runtime::traits::Header>::Number,
+		) -> Self::Header {
+			da_primitives::Header {
+				parent_hash,
+				number: block_number,
+				state_root: [0u8; 32].into(),
+				extrinsics_root: KateCommitment {
+					hash: [0u8; 32].into(),
+					commitment: Default::default(),
+					rows: 0,
+					cols: 0,
+				},
+				digest: digest.0,
+				app_data_lookup: DataLookup::default(),
+			}
+		}
+	}
+
+	thread_local! {
+		pub static RUNTIME_VERSION: std::cell::RefCell<sp_version::RuntimeVersion> =
+			Default::default();
+	}
+
+	type Balance = u64;
+	type BlockNumber = u64;
+	type TestXt = sp_runtime::testing::TestXt<Call, ()>;
+	type Block = sp_runtime::generic::Block<TestHeader, TestXt>;
+
+	frame_support::construct_runtime!(
+		pub enum Runtime where
+			Block = Block,
+			NodeBlock = Block,
+			UncheckedExtrinsic = TestXt
+		{
+			System: frame_system = 0,
+		}
+	);
+
+	parameter_types! {
+		pub const BlockHashCount: u32 = 256;
+		pub BlockWeights: frame_system::limits::BlockWeights = Default::default();
+	}
+
+	type TestHeader = da_primitives::Header<BlockNumber, BlakeTwo256>;
+
+	impl frame_system::Config for Runtime {
+		type AccountData = pallet_balances::AccountData<Balance>;
+		type AccountId = u64;
+		type BaseCallFilter = frame_support::traits::Everything;
+		type BlockHashCount = BlockHashCount;
+		type BlockLength = ();
+		type BlockNumber = BlockNumber;
+		type BlockWeights = BlockWeights;
+		type Call = Call;
+		type DbWeight = ();
+		type Event = Event;
+		type Hash = sp_core::H256;
+		type Hashing = BlakeTwo256;
+		type Header = TestHeader;
+		type HeaderBuilder = HeaderBuilder;
+		type Index = u64;
+		type Lookup = IdentityLookup<u64>;
+		type OnKilledAccount = ();
+		type OnNewAccount = ();
+		type OnSetCode = ();
+		type Origin = Origin;
+		type PalletInfo = PalletInfo;
+		type Randomness = TestRandomness<Runtime>;
+		type SS58Prefix = ();
+		type SystemWeightInfo = ();
+		type Version = RuntimeVersion;
+	}
+
+	fn new_test_ext(balance_factor: Balance) -> TestExternalities {
+		let mut storage = frame_system::GenesisConfig::default()
+			.build_storage::<Runtime>()
+			.unwrap();
+		storage.into()
+	}
+
+	#[test]
+	fn block_import_works() {
+		let header = da_primitives::Header {
+			parent_hash: hex!("1039e1a4bd0cf5deefe65f313577e70169c41c7773d6acf31ca8d671397559f5")
+				.into(),
+			number: 1,
+			state_root: hex!("1039e1a4bd0cf5deefe65f313577e70169c41c7773d6acf31ca8d671397559f5")
+				.into(),
+			extrinsics_root: KateCommitment {
+				hash: hex!("1039e1a4bd0cf5deefe65f313577e70169c41c7773d6acf31ca8d671397559f5")
+					.into(),
+				commitment: vec![],
+				rows: 0,
+				cols: 0,
+			},
+			digest: Digest::default(),
+			app_data_lookup: Default::default(),
+		};
+		// let header = da_primitives::Header { parent_hash: (), number: (), state_root: (), extrinsics_root: (), digest: (), app_data_lookup: () }::Header {
+		// 	parent_hash: hex!("1039e1a4bd0cf5deefe65f313577e70169c41c7773d6acf31ca8d671397559f5")
+		// 		.into(),
+		// 	number: 1,
+		// 	state_root: hex!("1039e1a4bd0cf5deefe65f313577e70169c41c7773d6acf31ca8d671397559f5")
+		// 		.into(),
+		// 	extrinsics_root: hex!(
+		// 		"1039e1a4bd0cf5deefe65f313577e70169c41c7773d6acf31ca8d671397559f5"
+		// 	)
+		// 	.into(),
+		// 	digest: Digest::default(),
+		// };
+
+		let block = Block {
+			header,
+			extrinsics: vec![],
+		};
+
+		new_test_ext(1).execute_with(|| {
+			Executive::execute_block(Block {
+				header,
+				extrinsics: vec![],
+			});
+		});
+	}
+}
+
 /*
 #[cfg(test)]
 mod tests {
