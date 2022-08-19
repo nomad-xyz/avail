@@ -596,28 +596,23 @@ where
 		<AllPallets as OffchainWorker<System::BlockNumber>>::offchain_worker(*header.number())
 	}
 }
-/*
 #[cfg(test)]
 mod tests {
-	use da_primitives::{AppId, Header};
+	use da_primitives::{asdr::AppUncheckedExtrinsic, Header, KateCommitment};
 	use frame_support::{
-		assert_err, parameter_types,
-		traits::{Currency, LockIdentifier, LockableCurrency, WithdrawReasons},
-		weights::{IdentityFee, RuntimeDbWeight, Weight, WeightToFeePolynomial},
+		parameter_types,
+		traits::{IsSubType, Randomness},
+		weights::{IdentityFee, RuntimeDbWeight, Weight},
 	};
-	use frame_system::{Call as SystemCall, ChainContext, LastRuntimeUpgradeInfo};
+	use frame_system::ChainContext;
 	use hex_literal::hex;
 	use pallet_balances::Call as BalancesCall;
 	use pallet_transaction_payment::CurrencyAdapter;
-	use sp_core::H256;
 	use sp_runtime::{
-		generic::{DigestItem, Block, Era},
-		testing::{Digest},
-		traits::{BlakeTwo256, Block as BlockT, Header as HeaderT, IdentityLookup},
-		transaction_validity::{
-			InvalidTransaction, TransactionValidityError, UnknownTransaction, ValidTransaction,
-		},
-		DispatchError,
+		generic::{Block, Era},
+		testing::Digest,
+		traits::{BlakeTwo256, IdentityLookup},
+		MultiAddress, MultiSignature,
 	};
 
 	use super::*;
@@ -762,8 +757,16 @@ mod tests {
 		}
 	);
 
+	impl IsSubType<Runtime> for da_control::Call<Runtime> {
+		fn is_sub_type(&self) -> Option<&Runtime> { None }
+	}
+
+	impl IsSubType<da_control::Call<Runtime>> for tests::Call {
+		fn is_sub_type(&self) -> Option<&da_control::Call<Runtime>> { None }
+	}
+
 	parameter_types! {
-		pub const BlockHashCount: u64 = 250;
+		pub const BlockHashCount: u32 = 250;
 		pub BlockWeights: frame_system::limits::BlockWeights =
 			frame_system::limits::BlockWeights::builder()
 				.base_block(10)
@@ -775,31 +778,66 @@ mod tests {
 			write: 100,
 		};
 	}
+
+	parameter_types! {
+		pub const MaxAppKeyLength: u32 = 32;
+		pub const MaxAppDataLength: u32 = 16 * 1024; // 16K
+		pub const MinBlockRows: u32 = 32;
+		pub const MaxBlockRows: u32 = 1024;
+		pub const MinBlockCols: u32 = 32;
+		pub const MaxBlockCols: u32 = 1024;
+	}
+
+	impl da_control::Config for Runtime {
+		type BlockLenProposalId = u32;
+		type Event = Event;
+		type MaxAppDataLength = MaxAppDataLength;
+		type MaxAppKeyLength = MaxAppKeyLength;
+		type MaxBlockCols = MaxBlockCols;
+		type MaxBlockRows = MaxBlockRows;
+		type MinBlockCols = MinBlockCols;
+		type MinBlockRows = MinBlockRows;
+		type WeightInfo = da_control::weights::SubstrateWeight<Runtime>;
+	}
+
+	type AccountId = u64;
+	type AccountIndex = u64;
+	struct TestRandomness {}
+
+	impl Randomness<sp_core::H256, u32> for TestRandomness {
+		fn random(subject: &[u8]) -> (sp_core::H256, u32) { ([0u8; 32].into(), 0u32) }
+	}
+
 	impl frame_system::Config for Runtime {
 		type AccountData = pallet_balances::AccountData<Balance>;
-		type AccountId = u64;
-		type AppId = AppId;
+		type AccountId = AccountId;
 		type BaseCallFilter = frame_support::traits::Everything;
 		type BlockHashCount = BlockHashCount;
 		type BlockLength = ();
-		type BlockNumber = u64;
+		type BlockNumber = BlockNumber;
 		type BlockWeights = BlockWeights;
-		type Call = Call;
+		type Call = da_control::Call<Runtime>;
 		type DbWeight = ();
 		type Event = Event;
 		type Hash = sp_core::H256;
 		type Hashing = BlakeTwo256;
-		type Header = Header<Self::BlockNumber, Self::Hashing>;
-		type Index = u64;
+		type Header = da_primitives::Header<BlockNumber, BlakeTwo256>;
+		type HeaderBuilder = frame_system::header_builder::da::HeaderBuilder<Runtime>;
+		type Index = AccountIndex;
 		type Lookup = IdentityLookup<u64>;
 		type OnKilledAccount = ();
 		type OnNewAccount = ();
 		type OnSetCode = ();
 		type Origin = Origin;
 		type PalletInfo = PalletInfo;
+		type Randomness = TestRandomness;
 		type SS58Prefix = ();
 		type SystemWeightInfo = ();
 		type Version = RuntimeVersion;
+	}
+
+	impl From<da_control::Event<Runtime>> for Event {
+		fn from(e: da_control::Event<Runtime>) -> Self { e.into() }
 	}
 
 	type Balance = u64;
@@ -848,10 +886,15 @@ mod tests {
 		pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
 		da_control::CheckAppId<Runtime>,
 	);
+	type Address = MultiAddress<AccountId, AccountIndex>;
+	type Signature = MultiSignature;
+
+	type BlockNumber = u32;
 	// type TestXt = sp_runtime::testing::TestXt<Call, SignedExtra>;
 	type TestHeader = Header<BlockNumber, BlakeTwo256>;
-	type TestBlock = Block<Header, TestUncheckedExtrinsic>;
-	type TestUncheckedExtrinsic = UncheckedExtrinsic<Address, ;
+	type TestBlock = Block<TestHeader, TestUncheckedExtrinsic>;
+	type TestUncheckedExtrinsic =
+		AppUncheckedExtrinsic<Address, frame_system::Call<Runtime>, Signature, SignedExtra>;
 
 	// Will contain `true` when the custom runtime logic was called.
 	const CUSTOM_ON_RUNTIME_KEY: &[u8] = &*b":custom:on_runtime";
@@ -867,7 +910,7 @@ mod tests {
 
 	type Executive = super::Executive<
 		Runtime,
-		Block<TestXt>,
+		TestBlock,
 		ChainContext<Runtime>,
 		Runtime,
 		AllPallets,
@@ -880,6 +923,7 @@ mod tests {
 			frame_system::CheckNonce::from(nonce),
 			frame_system::CheckWeight::new(),
 			pallet_transaction_payment::ChargeTransactionPayment::from(fee),
+			da_control::CheckAppId::from(1),
 		)
 	}
 
@@ -891,41 +935,41 @@ mod tests {
 		Call::Balances(BalancesCall::transfer { dest, value })
 	}
 
-	#[test]
-	fn balance_transfer_dispatch_works() {
-		let mut t = frame_system::GenesisConfig::default()
-			.build_storage::<Runtime>()
-			.unwrap();
-		pallet_balances::GenesisConfig::<Runtime> {
-			balances: vec![(1, 211)],
-		}
-		.assimilate_storage(&mut t)
-		.unwrap();
-		let xt = TestXt::new(call_transfer(2, 69), sign_extra(1, 0, 0));
-		let weight = xt.get_dispatch_info().weight
-			+ <Runtime as frame_system::Config>::BlockWeights::get()
-				.get(DispatchClass::Normal)
-				.base_extrinsic;
-		let fee: Balance =
-			<Runtime as pallet_transaction_payment::Config>::WeightToFee::calc(&weight);
-		let mut t = sp_io::TestExternalities::new(t);
-		t.execute_with(|| {
-			Executive::initialize_block(&Header::new(
-				1,
-				H256::default().into(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
-			));
-			let r = Executive::apply_extrinsic(xt);
-			assert!(r.is_ok());
-			assert_eq!(
-				<pallet_balances::Pallet<Runtime>>::total_balance(&1),
-				142 - fee
-			);
-			assert_eq!(<pallet_balances::Pallet<Runtime>>::total_balance(&2), 69);
-		});
-	}
+	// #[test]
+	// fn balance_transfer_dispatch_works() {
+	// 	let mut t = frame_system::GenesisConfig::default()
+	// 		.build_storage::<Runtime>()
+	// 		.unwrap();
+	// 	pallet_balances::GenesisConfig::<Runtime> {
+	// 		balances: vec![(1, 211)],
+	// 	}
+	// 	.assimilate_storage(&mut t)
+	// 	.unwrap();
+	// 	let xt = TestXt::new(call_transfer(2, 69), sign_extra(1, 0, 0));
+	// 	let weight = xt.get_dispatch_info().weight
+	// 		+ <Runtime as frame_system::Config>::BlockWeights::get()
+	// 			.get(DispatchClass::Normal)
+	// 			.base_extrinsic;
+	// 	let fee: Balance =
+	// 		<Runtime as pallet_transaction_payment::Config>::WeightToFee::calc(&weight);
+	// 	let mut t = sp_io::TestExternalities::new(t);
+	// 	t.execute_with(|| {
+	// 		Executive::initialize_block(&Header::new(
+	// 			1,
+	// 			H256::default().into(),
+	// 			H256::default(),
+	// 			[69u8; 32].into(),
+	// 			Digest::default(),
+	// 		));
+	// 		let r = Executive::apply_extrinsic(xt);
+	// 		assert!(r.is_ok());
+	// 		assert_eq!(
+	// 			<pallet_balances::Pallet<Runtime>>::total_balance(&1),
+	// 			142 - fee
+	// 		);
+	// 		assert_eq!(<pallet_balances::Pallet<Runtime>>::total_balance(&2), 69);
+	// 	});
+	// }
 
 	fn new_test_ext(balance_factor: Balance) -> sp_io::TestExternalities {
 		let mut t = frame_system::GenesisConfig::default()
@@ -942,270 +986,162 @@ mod tests {
 	#[test]
 	fn block_import_works() {
 		new_test_ext(1).execute_with(|| {
-			Executive::execute_block(Block {
-				header: Header {
+			Executive::execute_block(TestBlock {
+				header: TestHeader {
 					parent_hash: [69u8; 32].into(),
 					number: 1,
 					state_root: hex!(
 						"1039e1a4bd0cf5deefe65f313577e70169c41c7773d6acf31ca8d671397559f5"
 					)
 					.into(),
-					extrinsics_root: hex!(
-						"03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314"
-					)
-					.into(),
+					extrinsics_root: KateCommitment::from(
+						hex!("03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314")
+							.into(),
+					),
 					digest: Digest { logs: vec![] },
+					app_data_lookup: todo!(),
 				},
 				extrinsics: vec![],
 			});
 		});
 	}
 
-	#[test]
-	#[should_panic]
-	fn block_import_of_bad_state_root_fails() {
-		new_test_ext(1).execute_with(|| {
-			Executive::execute_block(Block {
-				header: Header {
-					parent_hash: [69u8; 32].into(),
-					number: 1,
-					state_root: [0u8; 32].into(),
-					extrinsics_root: hex!(
-						"03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314"
-					)
-					.into(),
-					digest: Digest { logs: vec![] },
-				},
-				extrinsics: vec![],
+	/*
+		#[test]
+		#[should_panic]
+		fn block_import_of_bad_state_root_fails() {
+			new_test_ext(1).execute_with(|| {
+				Executive::execute_block(Block {
+					header: Header {
+						parent_hash: [69u8; 32].into(),
+						number: 1,
+						state_root: [0u8; 32].into(),
+						extrinsics_root: hex!(
+							"03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314"
+						)
+						.into(),
+						digest: Digest { logs: vec![] },
+					},
+					extrinsics: vec![],
+				});
 			});
-		});
-	}
+		}
 
-	#[test]
-	#[should_panic]
-	fn block_import_of_bad_extrinsic_root_fails() {
-		new_test_ext(1).execute_with(|| {
-			Executive::execute_block(Block {
-				header: Header {
-					parent_hash: [69u8; 32].into(),
-					number: 1,
-					state_root: hex!(
-						"49cd58a254ccf6abc4a023d9a22dcfc421e385527a250faec69f8ad0d8ed3e48"
-					)
-					.into(),
-					extrinsics_root: [0u8; 32].into(),
-					digest: Digest { logs: vec![] },
-				},
-				extrinsics: vec![],
+		#[test]
+		#[should_panic]
+		fn block_import_of_bad_extrinsic_root_fails() {
+			new_test_ext(1).execute_with(|| {
+				Executive::execute_block(Block {
+					header: Header {
+						parent_hash: [69u8; 32].into(),
+						number: 1,
+						state_root: hex!(
+							"49cd58a254ccf6abc4a023d9a22dcfc421e385527a250faec69f8ad0d8ed3e48"
+						)
+						.into(),
+						extrinsics_root: [0u8; 32].into(),
+						digest: Digest { logs: vec![] },
+					},
+					extrinsics: vec![],
+				});
 			});
-		});
-	}
+		}
 
-	#[test]
-	fn bad_extrinsic_not_inserted() {
-		let mut t = new_test_ext(1);
-		// bad nonce check!
-		let xt = TestXt::new(call_transfer(33, 69), sign_extra(1, 30, 0));
-		t.execute_with(|| {
-			Executive::initialize_block(&Header::new(
-				1,
-				H256::default(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
-			));
-			assert_err!(
-				Executive::apply_extrinsic(xt),
-				TransactionValidityError::Invalid(InvalidTransaction::Future)
-			);
-			assert_eq!(<frame_system::Pallet<Runtime>>::extrinsic_index(), Some(0));
-		});
-	}
-
-	#[test]
-	fn block_weight_limit_enforced() {
-		let mut t = new_test_ext(10000);
-		// given: TestXt uses the encoded len as fixed Len:
-		let xt = TestXt::new(
-			Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
-			sign_extra(1, 0, 0),
-		);
-		let encoded = xt.encode();
-		let encoded_len = encoded.len() as Weight;
-		// on_initialize weight + base block execution weight
-		let block_weights = <Runtime as frame_system::Config>::BlockWeights::get();
-		let base_block_weight = 175 + block_weights.base_block;
-		let limit = block_weights.get(DispatchClass::Normal).max_total.unwrap() - base_block_weight;
-		let num_to_exhaust_block = limit / (encoded_len + 5);
-		t.execute_with(|| {
-			Executive::initialize_block(&Header::new(
-				1,
-				H256::default(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
-			));
-			// Base block execution weight + `on_initialize` weight from the custom module.
-			assert_eq!(
-				<frame_system::Pallet<Runtime>>::block_weight().total(),
-				base_block_weight
-			);
-
-			for nonce in 0..=num_to_exhaust_block {
-				let xt = TestXt::new(
-					Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
-					sign_extra(1, nonce.into(), 0),
+		#[test]
+		fn bad_extrinsic_not_inserted() {
+			let mut t = new_test_ext(1);
+			// bad nonce check!
+			let xt = TestXt::new(call_transfer(33, 69), sign_extra(1, 30, 0));
+			t.execute_with(|| {
+				Executive::initialize_block(&Header::new(
+					1,
+					H256::default(),
+					H256::default(),
+					[69u8; 32].into(),
+					Digest::default(),
+				));
+				assert_err!(
+					Executive::apply_extrinsic(xt),
+					TransactionValidityError::Invalid(InvalidTransaction::Future)
 				);
-				let res = Executive::apply_extrinsic(xt);
-				if nonce != num_to_exhaust_block {
-					assert!(res.is_ok());
-					assert_eq!(
-						<frame_system::Pallet<Runtime>>::block_weight().total(),
-						//--------------------- on_initialize + block_execution + extrinsic_base weight
-						(encoded_len + 5) * (nonce + 1) + base_block_weight,
+				assert_eq!(<frame_system::Pallet<Runtime>>::extrinsic_index(), Some(0));
+			});
+		}
+
+		#[test]
+		fn block_weight_limit_enforced() {
+			let mut t = new_test_ext(10000);
+			// given: TestXt uses the encoded len as fixed Len:
+			let xt = TestXt::new(
+				Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
+				sign_extra(1, 0, 0),
+			);
+			let encoded = xt.encode();
+			let encoded_len = encoded.len() as Weight;
+			// on_initialize weight + base block execution weight
+			let block_weights = <Runtime as frame_system::Config>::BlockWeights::get();
+			let base_block_weight = 175 + block_weights.base_block;
+			let limit = block_weights.get(DispatchClass::Normal).max_total.unwrap() - base_block_weight;
+			let num_to_exhaust_block = limit / (encoded_len + 5);
+			t.execute_with(|| {
+				Executive::initialize_block(&Header::new(
+					1,
+					H256::default(),
+					H256::default(),
+					[69u8; 32].into(),
+					Digest::default(),
+				));
+				// Base block execution weight + `on_initialize` weight from the custom module.
+				assert_eq!(
+					<frame_system::Pallet<Runtime>>::block_weight().total(),
+					base_block_weight
+				);
+
+				for nonce in 0..=num_to_exhaust_block {
+					let xt = TestXt::new(
+						Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
+						sign_extra(1, nonce.into(), 0),
 					);
-					assert_eq!(
-						<frame_system::Pallet<Runtime>>::extrinsic_index(),
-						Some(nonce as u32 + 1)
-					);
-				} else {
-					assert_eq!(res, Err(InvalidTransaction::ExhaustsResources.into()));
+					let res = Executive::apply_extrinsic(xt);
+					if nonce != num_to_exhaust_block {
+						assert!(res.is_ok());
+						assert_eq!(
+							<frame_system::Pallet<Runtime>>::block_weight().total(),
+							//--------------------- on_initialize + block_execution + extrinsic_base weight
+							(encoded_len + 5) * (nonce + 1) + base_block_weight,
+						);
+						assert_eq!(
+							<frame_system::Pallet<Runtime>>::extrinsic_index(),
+							Some(nonce as u32 + 1)
+						);
+					} else {
+						assert_eq!(res, Err(InvalidTransaction::ExhaustsResources.into()));
+					}
 				}
-			}
-		});
-	}
+			});
+		}
 
-	#[test]
-	fn block_weight_and_size_is_stored_per_tx() {
-		let xt = TestXt::new(
-			Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
-			sign_extra(1, 0, 0),
-		);
-		let x1 = TestXt::new(
-			Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
-			sign_extra(1, 1, 0),
-		);
-		let x2 = TestXt::new(
-			Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
-			sign_extra(1, 2, 0),
-		);
-		let len = xt.clone().encode().len() as u32;
-		let mut t = new_test_ext(1);
-		t.execute_with(|| {
-			// Block execution weight + on_initialize weight from custom module
-			let base_block_weight =
-				175 + <Runtime as frame_system::Config>::BlockWeights::get().base_block;
-
-			Executive::initialize_block(&Header::new(
-				1,
-				H256::default(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
-			));
-
-			assert_eq!(
-				<frame_system::Pallet<Runtime>>::block_weight().total(),
-				base_block_weight
+		#[test]
+		fn block_weight_and_size_is_stored_per_tx() {
+			let xt = TestXt::new(
+				Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
+				sign_extra(1, 0, 0),
 			);
-			assert_eq!(<frame_system::Pallet<Runtime>>::all_extrinsics_len(), 0);
-
-			assert!(Executive::apply_extrinsic(xt.clone()).unwrap().is_ok());
-			assert!(Executive::apply_extrinsic(x1.clone()).unwrap().is_ok());
-			assert!(Executive::apply_extrinsic(x2.clone()).unwrap().is_ok());
-
-			// default weight for `TestXt` == encoded length.
-			let extrinsic_weight = len as Weight
-				+ <Runtime as frame_system::Config>::BlockWeights::get()
-					.get(DispatchClass::Normal)
-					.base_extrinsic;
-			assert_eq!(
-				<frame_system::Pallet<Runtime>>::block_weight().total(),
-				base_block_weight + 3 * extrinsic_weight,
+			let x1 = TestXt::new(
+				Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
+				sign_extra(1, 1, 0),
 			);
-			assert_eq!(
-				<frame_system::Pallet<Runtime>>::all_extrinsics_len(),
-				3 * len
+			let x2 = TestXt::new(
+				Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
+				sign_extra(1, 2, 0),
 			);
-
-			let _ = <frame_system::Pallet<Runtime>>::finalize();
-			// All extrinsics length cleaned on `System::finalize`
-			assert_eq!(<frame_system::Pallet<Runtime>>::all_extrinsics_len(), 0);
-
-			// New Block
-			Executive::initialize_block(&Header::new(
-				2,
-				H256::default(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
-			));
-
-			// Block weight cleaned up on `System::initialize`
-			assert_eq!(
-				<frame_system::Pallet<Runtime>>::block_weight().total(),
-				base_block_weight
-			);
-		});
-	}
-
-	#[test]
-	fn validate_unsigned() {
-		let valid = TestXt::new(Call::Custom(custom::Call::allowed_unsigned {}), None);
-		let invalid = TestXt::new(Call::Custom(custom::Call::unallowed_unsigned {}), None);
-		let mut t = new_test_ext(1);
-
-		t.execute_with(|| {
-			assert_eq!(
-				Executive::validate_transaction(
-					TransactionSource::InBlock,
-					valid.clone(),
-					Default::default(),
-				),
-				Ok(ValidTransaction::default()),
-			);
-			assert_eq!(
-				Executive::validate_transaction(
-					TransactionSource::InBlock,
-					invalid.clone(),
-					Default::default(),
-				),
-				Err(TransactionValidityError::Unknown(
-					UnknownTransaction::NoUnsignedValidator
-				)),
-			);
-			assert_eq!(
-				Executive::apply_extrinsic(valid),
-				Ok(Err(DispatchError::BadOrigin))
-			);
-			assert_eq!(
-				Executive::apply_extrinsic(invalid),
-				Err(TransactionValidityError::Unknown(
-					UnknownTransaction::NoUnsignedValidator
-				))
-			);
-		});
-	}
-
-	#[test]
-	fn can_pay_for_tx_fee_on_full_lock() {
-		let id: LockIdentifier = *b"0       ";
-		let execute_with_lock = |lock: WithdrawReasons| {
+			let len = xt.clone().encode().len() as u32;
 			let mut t = new_test_ext(1);
 			t.execute_with(|| {
-				<pallet_balances::Pallet<Runtime> as LockableCurrency<Balance>>::set_lock(
-					id, &1, 110, lock,
-				);
-				let xt = TestXt::new(
-					Call::System(SystemCall::remark { remark: vec![1u8] }),
-					sign_extra(1, 0, 0),
-				);
-				let weight = xt.get_dispatch_info().weight
-					+ <Runtime as frame_system::Config>::BlockWeights::get()
-						.get(DispatchClass::Normal)
-						.base_extrinsic;
-				let fee: Balance =
-					<Runtime as pallet_transaction_payment::Config>::WeightToFee::calc(&weight);
+				// Block execution weight + on_initialize weight from custom module
+				let base_block_weight =
+					175 + <Runtime as frame_system::Config>::BlockWeights::get().base_block;
+
 				Executive::initialize_block(&Header::new(
 					1,
 					H256::default(),
@@ -1214,363 +1150,473 @@ mod tests {
 					Digest::default(),
 				));
 
-				if lock == WithdrawReasons::except(WithdrawReasons::TRANSACTION_PAYMENT) {
-					assert!(Executive::apply_extrinsic(xt).unwrap().is_ok());
-					// tx fee has been deducted.
-					assert_eq!(
-						<pallet_balances::Pallet<Runtime>>::total_balance(&1),
-						111 - fee
-					);
-				} else {
-					assert_eq!(
-						Executive::apply_extrinsic(xt),
-						Err(InvalidTransaction::Payment.into()),
-					);
-					assert_eq!(<pallet_balances::Pallet<Runtime>>::total_balance(&1), 111);
-				}
+				assert_eq!(
+					<frame_system::Pallet<Runtime>>::block_weight().total(),
+					base_block_weight
+				);
+				assert_eq!(<frame_system::Pallet<Runtime>>::all_extrinsics_len(), 0);
+
+				assert!(Executive::apply_extrinsic(xt.clone()).unwrap().is_ok());
+				assert!(Executive::apply_extrinsic(x1.clone()).unwrap().is_ok());
+				assert!(Executive::apply_extrinsic(x2.clone()).unwrap().is_ok());
+
+				// default weight for `TestXt` == encoded length.
+				let extrinsic_weight = len as Weight
+					+ <Runtime as frame_system::Config>::BlockWeights::get()
+						.get(DispatchClass::Normal)
+						.base_extrinsic;
+				assert_eq!(
+					<frame_system::Pallet<Runtime>>::block_weight().total(),
+					base_block_weight + 3 * extrinsic_weight,
+				);
+				assert_eq!(
+					<frame_system::Pallet<Runtime>>::all_extrinsics_len(),
+					3 * len
+				);
+
+				let _ = <frame_system::Pallet<Runtime>>::finalize();
+				// All extrinsics length cleaned on `System::finalize`
+				assert_eq!(<frame_system::Pallet<Runtime>>::all_extrinsics_len(), 0);
+
+				// New Block
+				Executive::initialize_block(&Header::new(
+					2,
+					H256::default(),
+					H256::default(),
+					[69u8; 32].into(),
+					Digest::default(),
+				));
+
+				// Block weight cleaned up on `System::initialize`
+				assert_eq!(
+					<frame_system::Pallet<Runtime>>::block_weight().total(),
+					base_block_weight
+				);
 			});
-		};
-
-		execute_with_lock(WithdrawReasons::all());
-		execute_with_lock(WithdrawReasons::except(
-			WithdrawReasons::TRANSACTION_PAYMENT,
-		));
-	}
-
-	#[test]
-	fn block_hooks_weight_is_stored() {
-		new_test_ext(1).execute_with(|| {
-			Executive::initialize_block(&Header::new_from_number(1));
-			Executive::finalize_block();
-			// NOTE: might need updates over time if new weights are introduced.
-			// For now it only accounts for the base block execution weight and
-			// the `on_initialize` weight defined in the custom test module.
-			assert_eq!(
-				<frame_system::Pallet<Runtime>>::block_weight().total(),
-				175 + 175 + 10
-			);
-		})
-	}
-
-	#[test]
-	fn runtime_upgraded_should_work() {
-		new_test_ext(1).execute_with(|| {
-			RUNTIME_VERSION.with(|v| *v.borrow_mut() = Default::default());
-			// It should be added at genesis
-			assert!(frame_system::LastRuntimeUpgrade::<Runtime>::exists());
-			assert!(!Executive::runtime_upgraded());
-
-			RUNTIME_VERSION.with(|v| {
-				*v.borrow_mut() = sp_version::RuntimeVersion {
-					spec_version: 1,
-					..Default::default()
-				}
-			});
-			assert!(Executive::runtime_upgraded());
-			assert_eq!(
-				Some(LastRuntimeUpgradeInfo {
-					spec_version: 1.into(),
-					spec_name: "".into()
-				}),
-				frame_system::LastRuntimeUpgrade::<Runtime>::get(),
-			);
-
-			RUNTIME_VERSION.with(|v| {
-				*v.borrow_mut() = sp_version::RuntimeVersion {
-					spec_version: 1,
-					spec_name: "test".into(),
-					..Default::default()
-				}
-			});
-			assert!(Executive::runtime_upgraded());
-			assert_eq!(
-				Some(LastRuntimeUpgradeInfo {
-					spec_version: 1.into(),
-					spec_name: "test".into()
-				}),
-				frame_system::LastRuntimeUpgrade::<Runtime>::get(),
-			);
-
-			RUNTIME_VERSION.with(|v| {
-				*v.borrow_mut() = sp_version::RuntimeVersion {
-					spec_version: 1,
-					spec_name: "test".into(),
-					impl_version: 2,
-					..Default::default()
-				}
-			});
-			assert!(!Executive::runtime_upgraded());
-
-			frame_system::LastRuntimeUpgrade::<Runtime>::take();
-			assert!(Executive::runtime_upgraded());
-			assert_eq!(
-				Some(LastRuntimeUpgradeInfo {
-					spec_version: 1.into(),
-					spec_name: "test".into()
-				}),
-				frame_system::LastRuntimeUpgrade::<Runtime>::get(),
-			);
-		})
-	}
-
-	#[test]
-	fn last_runtime_upgrade_was_upgraded_works() {
-		let test_data = vec![
-			(0, "", 1, "", true),
-			(1, "", 1, "", false),
-			(1, "", 1, "test", true),
-			(1, "", 0, "", false),
-			(1, "", 0, "test", true),
-		];
-
-		for (spec_version, spec_name, c_spec_version, c_spec_name, result) in test_data {
-			let current = sp_version::RuntimeVersion {
-				spec_version: c_spec_version,
-				spec_name: c_spec_name.into(),
-				..Default::default()
-			};
-
-			let last = LastRuntimeUpgradeInfo {
-				spec_version: spec_version.into(),
-				spec_name: spec_name.into(),
-			};
-
-			assert_eq!(result, last.was_upgraded(&current));
 		}
-	}
 
-	#[test]
-	fn custom_runtime_upgrade_is_called_before_modules() {
-		new_test_ext(1).execute_with(|| {
-			// Make sure `on_runtime_upgrade` is called.
-			RUNTIME_VERSION.with(|v| {
-				*v.borrow_mut() = sp_version::RuntimeVersion {
-					spec_version: 1,
-					..Default::default()
-				}
+		#[test]
+		fn validate_unsigned() {
+			let valid = TestXt::new(Call::Custom(custom::Call::allowed_unsigned {}), None);
+			let invalid = TestXt::new(Call::Custom(custom::Call::unallowed_unsigned {}), None);
+			let mut t = new_test_ext(1);
+
+			t.execute_with(|| {
+				assert_eq!(
+					Executive::validate_transaction(
+						TransactionSource::InBlock,
+						valid.clone(),
+						Default::default(),
+					),
+					Ok(ValidTransaction::default()),
+				);
+				assert_eq!(
+					Executive::validate_transaction(
+						TransactionSource::InBlock,
+						invalid.clone(),
+						Default::default(),
+					),
+					Err(TransactionValidityError::Unknown(
+						UnknownTransaction::NoUnsignedValidator
+					)),
+				);
+				assert_eq!(
+					Executive::apply_extrinsic(valid),
+					Ok(Err(DispatchError::BadOrigin))
+				);
+				assert_eq!(
+					Executive::apply_extrinsic(invalid),
+					Err(TransactionValidityError::Unknown(
+						UnknownTransaction::NoUnsignedValidator
+					))
+				);
 			});
+		}
 
-			Executive::initialize_block(&Header::new(
-				1,
-				H256::default(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
+		#[test]
+		fn can_pay_for_tx_fee_on_full_lock() {
+			let id: LockIdentifier = *b"0       ";
+			let execute_with_lock = |lock: WithdrawReasons| {
+				let mut t = new_test_ext(1);
+				t.execute_with(|| {
+					<pallet_balances::Pallet<Runtime> as LockableCurrency<Balance>>::set_lock(
+						id, &1, 110, lock,
+					);
+					let xt = TestXt::new(
+						Call::System(SystemCall::remark { remark: vec![1u8] }),
+						sign_extra(1, 0, 0),
+					);
+					let weight = xt.get_dispatch_info().weight
+						+ <Runtime as frame_system::Config>::BlockWeights::get()
+							.get(DispatchClass::Normal)
+							.base_extrinsic;
+					let fee: Balance =
+						<Runtime as pallet_transaction_payment::Config>::WeightToFee::calc(&weight);
+					Executive::initialize_block(&Header::new(
+						1,
+						H256::default(),
+						H256::default(),
+						[69u8; 32].into(),
+						Digest::default(),
+					));
+
+					if lock == WithdrawReasons::except(WithdrawReasons::TRANSACTION_PAYMENT) {
+						assert!(Executive::apply_extrinsic(xt).unwrap().is_ok());
+						// tx fee has been deducted.
+						assert_eq!(
+							<pallet_balances::Pallet<Runtime>>::total_balance(&1),
+							111 - fee
+						);
+					} else {
+						assert_eq!(
+							Executive::apply_extrinsic(xt),
+							Err(InvalidTransaction::Payment.into()),
+						);
+						assert_eq!(<pallet_balances::Pallet<Runtime>>::total_balance(&1), 111);
+					}
+				});
+			};
+
+			execute_with_lock(WithdrawReasons::all());
+			execute_with_lock(WithdrawReasons::except(
+				WithdrawReasons::TRANSACTION_PAYMENT,
 			));
+		}
 
-			assert_eq!(&sp_io::storage::get(TEST_KEY).unwrap()[..], *b"module");
-			assert_eq!(
-				sp_io::storage::get(CUSTOM_ON_RUNTIME_KEY).unwrap(),
-				true.encode()
-			);
-		});
-	}
+		#[test]
+		fn block_hooks_weight_is_stored() {
+			new_test_ext(1).execute_with(|| {
+				Executive::initialize_block(&Header::new_from_number(1));
+				Executive::finalize_block();
+				// NOTE: might need updates over time if new weights are introduced.
+				// For now it only accounts for the base block execution weight and
+				// the `on_initialize` weight defined in the custom test module.
+				assert_eq!(
+					<frame_system::Pallet<Runtime>>::block_weight().total(),
+					175 + 175 + 10
+				);
+			})
+		}
 
-	/// Regression test that ensures that the custom on runtime upgrade is called when executive is
-	/// used through the `ExecuteBlock` trait.
-	#[test]
-	fn custom_runtime_upgrade_is_called_when_using_execute_block_trait() {
-		let xt = TestXt::new(
-			Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
-			sign_extra(1, 0, 0),
-		);
+		#[test]
+		fn runtime_upgraded_should_work() {
+			new_test_ext(1).execute_with(|| {
+				RUNTIME_VERSION.with(|v| *v.borrow_mut() = Default::default());
+				// It should be added at genesis
+				assert!(frame_system::LastRuntimeUpgrade::<Runtime>::exists());
+				assert!(!Executive::runtime_upgraded());
 
-		let header = new_test_ext(1).execute_with(|| {
-			// Make sure `on_runtime_upgrade` is called.
-			RUNTIME_VERSION.with(|v| {
-				*v.borrow_mut() = sp_version::RuntimeVersion {
-					spec_version: 1,
+				RUNTIME_VERSION.with(|v| {
+					*v.borrow_mut() = sp_version::RuntimeVersion {
+						spec_version: 1,
+						..Default::default()
+					}
+				});
+				assert!(Executive::runtime_upgraded());
+				assert_eq!(
+					Some(LastRuntimeUpgradeInfo {
+						spec_version: 1.into(),
+						spec_name: "".into()
+					}),
+					frame_system::LastRuntimeUpgrade::<Runtime>::get(),
+				);
+
+				RUNTIME_VERSION.with(|v| {
+					*v.borrow_mut() = sp_version::RuntimeVersion {
+						spec_version: 1,
+						spec_name: "test".into(),
+						..Default::default()
+					}
+				});
+				assert!(Executive::runtime_upgraded());
+				assert_eq!(
+					Some(LastRuntimeUpgradeInfo {
+						spec_version: 1.into(),
+						spec_name: "test".into()
+					}),
+					frame_system::LastRuntimeUpgrade::<Runtime>::get(),
+				);
+
+				RUNTIME_VERSION.with(|v| {
+					*v.borrow_mut() = sp_version::RuntimeVersion {
+						spec_version: 1,
+						spec_name: "test".into(),
+						impl_version: 2,
+						..Default::default()
+					}
+				});
+				assert!(!Executive::runtime_upgraded());
+
+				frame_system::LastRuntimeUpgrade::<Runtime>::take();
+				assert!(Executive::runtime_upgraded());
+				assert_eq!(
+					Some(LastRuntimeUpgradeInfo {
+						spec_version: 1.into(),
+						spec_name: "test".into()
+					}),
+					frame_system::LastRuntimeUpgrade::<Runtime>::get(),
+				);
+			})
+		}
+
+		#[test]
+		fn last_runtime_upgrade_was_upgraded_works() {
+			let test_data = vec![
+				(0, "", 1, "", true),
+				(1, "", 1, "", false),
+				(1, "", 1, "test", true),
+				(1, "", 0, "", false),
+				(1, "", 0, "test", true),
+			];
+
+			for (spec_version, spec_name, c_spec_version, c_spec_name, result) in test_data {
+				let current = sp_version::RuntimeVersion {
+					spec_version: c_spec_version,
+					spec_name: c_spec_name.into(),
 					..Default::default()
-				}
-			});
+				};
 
-			// Let's build some fake block.
-			Executive::initialize_block(&Header::new(
-				1,
-				H256::default(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
-			));
+				let last = LastRuntimeUpgradeInfo {
+					spec_version: spec_version.into(),
+					spec_name: spec_name.into(),
+				};
 
-			Executive::apply_extrinsic(xt.clone()).unwrap().unwrap();
-
-			Executive::finalize_block()
-		});
-
-		// Reset to get the correct new genesis below.
-		RUNTIME_VERSION.with(|v| {
-			*v.borrow_mut() = sp_version::RuntimeVersion {
-				spec_version: 0,
-				..Default::default()
+				assert_eq!(result, last.was_upgraded(&current));
 			}
-		});
+		}
 
-		new_test_ext(1).execute_with(|| {
-			// Make sure `on_runtime_upgrade` is called.
+		#[test]
+		fn custom_runtime_upgrade_is_called_before_modules() {
+			new_test_ext(1).execute_with(|| {
+				// Make sure `on_runtime_upgrade` is called.
+				RUNTIME_VERSION.with(|v| {
+					*v.borrow_mut() = sp_version::RuntimeVersion {
+						spec_version: 1,
+						..Default::default()
+					}
+				});
+
+				Executive::initialize_block(&Header::new(
+					1,
+					H256::default(),
+					H256::default(),
+					[69u8; 32].into(),
+					Digest::default(),
+				));
+
+				assert_eq!(&sp_io::storage::get(TEST_KEY).unwrap()[..], *b"module");
+				assert_eq!(
+					sp_io::storage::get(CUSTOM_ON_RUNTIME_KEY).unwrap(),
+					true.encode()
+				);
+			});
+		}
+
+		/// Regression test that ensures that the custom on runtime upgrade is called when executive is
+		/// used through the `ExecuteBlock` trait.
+		#[test]
+		fn custom_runtime_upgrade_is_called_when_using_execute_block_trait() {
+			let xt = TestXt::new(
+				Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
+				sign_extra(1, 0, 0),
+			);
+
+			let header = new_test_ext(1).execute_with(|| {
+				// Make sure `on_runtime_upgrade` is called.
+				RUNTIME_VERSION.with(|v| {
+					*v.borrow_mut() = sp_version::RuntimeVersion {
+						spec_version: 1,
+						..Default::default()
+					}
+				});
+
+				// Let's build some fake block.
+				Executive::initialize_block(&Header::new(
+					1,
+					H256::default(),
+					H256::default(),
+					[69u8; 32].into(),
+					Digest::default(),
+				));
+
+				Executive::apply_extrinsic(xt.clone()).unwrap().unwrap();
+
+				Executive::finalize_block()
+			});
+
+			// Reset to get the correct new genesis below.
 			RUNTIME_VERSION.with(|v| {
 				*v.borrow_mut() = sp_version::RuntimeVersion {
-					spec_version: 1,
+					spec_version: 0,
 					..Default::default()
 				}
 			});
 
-			<Executive as ExecuteBlock<Block<TestXt>>>::execute_block(Block::new(header, vec![xt]));
+			new_test_ext(1).execute_with(|| {
+				// Make sure `on_runtime_upgrade` is called.
+				RUNTIME_VERSION.with(|v| {
+					*v.borrow_mut() = sp_version::RuntimeVersion {
+						spec_version: 1,
+						..Default::default()
+					}
+				});
 
-			assert_eq!(&sp_io::storage::get(TEST_KEY).unwrap()[..], *b"module");
-			assert_eq!(
-				sp_io::storage::get(CUSTOM_ON_RUNTIME_KEY).unwrap(),
-				true.encode()
-			);
-		});
-	}
+				<Executive as ExecuteBlock<Block<TestXt>>>::execute_block(Block::new(header, vec![xt]));
 
-	#[test]
-	fn all_weights_are_recorded_correctly() {
-		new_test_ext(1).execute_with(|| {
-			// Make sure `on_runtime_upgrade` is called for maximum complexity
-			RUNTIME_VERSION.with(|v| {
-				*v.borrow_mut() = sp_version::RuntimeVersion {
-					spec_version: 1,
-					..Default::default()
-				}
+				assert_eq!(&sp_io::storage::get(TEST_KEY).unwrap()[..], *b"module");
+				assert_eq!(
+					sp_io::storage::get(CUSTOM_ON_RUNTIME_KEY).unwrap(),
+					true.encode()
+				);
+			});
+		}
+
+		#[test]
+		fn all_weights_are_recorded_correctly() {
+			new_test_ext(1).execute_with(|| {
+				// Make sure `on_runtime_upgrade` is called for maximum complexity
+				RUNTIME_VERSION.with(|v| {
+					*v.borrow_mut() = sp_version::RuntimeVersion {
+						spec_version: 1,
+						..Default::default()
+					}
+				});
+
+				let block_number = 1;
+
+				Executive::initialize_block(&Header::new(
+					block_number,
+					H256::default(),
+					H256::default(),
+					[69u8; 32].into(),
+					Digest::default(),
+				));
+
+				// All weights that show up in the `initialize_block_impl`
+				let frame_system_upgrade_weight = frame_system::Pallet::<Runtime>::on_runtime_upgrade();
+				let custom_runtime_upgrade_weight = CustomOnRuntimeUpgrade::on_runtime_upgrade();
+				let runtime_upgrade_weight = <AllPallets as OnRuntimeUpgrade>::on_runtime_upgrade();
+				let frame_system_on_initialize_weight =
+					frame_system::Pallet::<Runtime>::on_initialize(block_number);
+				let on_initialize_weight =
+					<AllPallets as OnInitialize<u64>>::on_initialize(block_number);
+				let base_block_weight =
+					<Runtime as frame_system::Config>::BlockWeights::get().base_block;
+
+				// Weights are recorded correctly
+				assert_eq!(
+					frame_system::Pallet::<Runtime>::block_weight().total(),
+					frame_system_upgrade_weight
+						+ custom_runtime_upgrade_weight
+						+ runtime_upgrade_weight
+						+ frame_system_on_initialize_weight
+						+ on_initialize_weight
+						+ base_block_weight,
+				);
+			});
+		}
+
+		#[test]
+		fn offchain_worker_works_as_expected() {
+			new_test_ext(1).execute_with(|| {
+				let parent_hash = sp_core::H256::from([69u8; 32]);
+				let mut digest = Digest::default();
+				digest.push(DigestItem::Seal([1, 2, 3, 4], vec![5, 6, 7, 8]));
+
+				let header = Header::new(
+					1,
+					H256::default(),
+					H256::default(),
+					parent_hash,
+					digest.clone(),
+				);
+
+				Executive::offchain_worker(&header);
+
+				assert_eq!(digest, System::digest());
+				assert_eq!(parent_hash, System::block_hash(0));
+				assert_eq!(header.hash(), System::block_hash(1));
+			});
+		}
+
+		#[test]
+		fn calculating_storage_root_twice_works() {
+			let call = Call::Custom(custom::Call::calculate_storage_root {});
+			let xt = TestXt::new(call, sign_extra(1, 0, 0));
+
+			let header = new_test_ext(1).execute_with(|| {
+				// Let's build some fake block.
+				Executive::initialize_block(&Header::new(
+					1,
+					H256::default(),
+					H256::default(),
+					[69u8; 32].into(),
+					Digest::default(),
+				));
+
+				Executive::apply_extrinsic(xt.clone()).unwrap().unwrap();
+
+				Executive::finalize_block()
 			});
 
-			let block_number = 1;
+			new_test_ext(1).execute_with(|| {
+				Executive::execute_block(Block::new(header, vec![xt]));
+			});
+		}
 
-			Executive::initialize_block(&Header::new(
-				block_number,
-				H256::default(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
-			));
-
-			// All weights that show up in the `initialize_block_impl`
-			let frame_system_upgrade_weight = frame_system::Pallet::<Runtime>::on_runtime_upgrade();
-			let custom_runtime_upgrade_weight = CustomOnRuntimeUpgrade::on_runtime_upgrade();
-			let runtime_upgrade_weight = <AllPallets as OnRuntimeUpgrade>::on_runtime_upgrade();
-			let frame_system_on_initialize_weight =
-				frame_system::Pallet::<Runtime>::on_initialize(block_number);
-			let on_initialize_weight =
-				<AllPallets as OnInitialize<u64>>::on_initialize(block_number);
-			let base_block_weight =
-				<Runtime as frame_system::Config>::BlockWeights::get().base_block;
-
-			// Weights are recorded correctly
-			assert_eq!(
-				frame_system::Pallet::<Runtime>::block_weight().total(),
-				frame_system_upgrade_weight
-					+ custom_runtime_upgrade_weight
-					+ runtime_upgrade_weight
-					+ frame_system_on_initialize_weight
-					+ on_initialize_weight
-					+ base_block_weight,
+		#[test]
+		#[should_panic(expected = "Invalid inherent position for extrinsic at index 1")]
+		fn invalid_inherent_position_fail() {
+			let xt1 = TestXt::new(
+				Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
+				sign_extra(1, 0, 0),
 			);
-		});
-	}
+			let xt2 = TestXt::new(Call::Custom(custom::Call::inherent_call {}), None);
 
-	#[test]
-	fn offchain_worker_works_as_expected() {
-		new_test_ext(1).execute_with(|| {
-			let parent_hash = sp_core::H256::from([69u8; 32]);
-			let mut digest = Digest::default();
-			digest.push(DigestItem::Seal([1, 2, 3, 4], vec![5, 6, 7, 8]));
+			let header = new_test_ext(1).execute_with(|| {
+				// Let's build some fake block.
+				Executive::initialize_block(&Header::new(
+					1,
+					H256::default(),
+					H256::default(),
+					[69u8; 32].into(),
+					Digest::default(),
+				));
 
-			let header = Header::new(
-				1,
-				H256::default(),
-				H256::default(),
-				parent_hash,
-				digest.clone(),
-			);
+				Executive::apply_extrinsic(xt1.clone()).unwrap().unwrap();
+				Executive::apply_extrinsic(xt2.clone()).unwrap().unwrap();
 
-			Executive::offchain_worker(&header);
+				Executive::finalize_block()
+			});
 
-			assert_eq!(digest, System::digest());
-			assert_eq!(parent_hash, System::block_hash(0));
-			assert_eq!(header.hash(), System::block_hash(1));
-		});
-	}
+			new_test_ext(1).execute_with(|| {
+				Executive::execute_block(Block::new(header, vec![xt1, xt2]));
+			});
+		}
 
-	#[test]
-	fn calculating_storage_root_twice_works() {
-		let call = Call::Custom(custom::Call::calculate_storage_root {});
-		let xt = TestXt::new(call, sign_extra(1, 0, 0));
+		#[test]
+		fn valid_inherents_position_works() {
+			let xt1 = TestXt::new(Call::Custom(custom::Call::inherent_call {}), None);
+			let xt2 = TestXt::new(call_transfer(33, 0), sign_extra(1, 0, 0));
 
-		let header = new_test_ext(1).execute_with(|| {
-			// Let's build some fake block.
-			Executive::initialize_block(&Header::new(
-				1,
-				H256::default(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
-			));
+			let header = new_test_ext(1).execute_with(|| {
+				// Let's build some fake block.
+				Executive::initialize_block(&Header::new(
+					1,
+					H256::default(),
+					H256::default(),
+					[69u8; 32].into(),
+					Digest::default(),
+				));
 
-			Executive::apply_extrinsic(xt.clone()).unwrap().unwrap();
+				Executive::apply_extrinsic(xt1.clone()).unwrap().unwrap();
+				Executive::apply_extrinsic(xt2.clone()).unwrap().unwrap();
 
-			Executive::finalize_block()
-		});
+				Executive::finalize_block()
+			});
 
-		new_test_ext(1).execute_with(|| {
-			Executive::execute_block(Block::new(header, vec![xt]));
-		});
-	}
-
-	#[test]
-	#[should_panic(expected = "Invalid inherent position for extrinsic at index 1")]
-	fn invalid_inherent_position_fail() {
-		let xt1 = TestXt::new(
-			Call::Balances(BalancesCall::transfer { dest: 33, value: 0 }),
-			sign_extra(1, 0, 0),
-		);
-		let xt2 = TestXt::new(Call::Custom(custom::Call::inherent_call {}), None);
-
-		let header = new_test_ext(1).execute_with(|| {
-			// Let's build some fake block.
-			Executive::initialize_block(&Header::new(
-				1,
-				H256::default(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
-			));
-
-			Executive::apply_extrinsic(xt1.clone()).unwrap().unwrap();
-			Executive::apply_extrinsic(xt2.clone()).unwrap().unwrap();
-
-			Executive::finalize_block()
-		});
-
-		new_test_ext(1).execute_with(|| {
-			Executive::execute_block(Block::new(header, vec![xt1, xt2]));
-		});
-	}
-
-	#[test]
-	fn valid_inherents_position_works() {
-		let xt1 = TestXt::new(Call::Custom(custom::Call::inherent_call {}), None);
-		let xt2 = TestXt::new(call_transfer(33, 0), sign_extra(1, 0, 0));
-
-		let header = new_test_ext(1).execute_with(|| {
-			// Let's build some fake block.
-			Executive::initialize_block(&Header::new(
-				1,
-				H256::default(),
-				H256::default(),
-				[69u8; 32].into(),
-				Digest::default(),
-			));
-
-			Executive::apply_extrinsic(xt1.clone()).unwrap().unwrap();
-			Executive::apply_extrinsic(xt2.clone()).unwrap().unwrap();
-
-			Executive::finalize_block()
-		});
-
-		new_test_ext(1).execute_with(|| {
-			Executive::execute_block(Block::new(header, vec![xt1, xt2]));
-		});
-	}
-}*/
+			new_test_ext(1).execute_with(|| {
+				Executive::execute_block(Block::new(header, vec![xt1, xt2]));
+			});
+	}*/
+}

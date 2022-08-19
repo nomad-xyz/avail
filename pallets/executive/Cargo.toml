@@ -36,6 +36,7 @@ pallet-balances = "4.0.0-dev"
 pallet-transaction-payment = "4.0.0-dev"
 sp-version = "4.0.0-dev"
 sp-inherents = "4.0.0-dev"
+da-control = { path = "../dactr" }
 
 [features]
 default = ["std"]
