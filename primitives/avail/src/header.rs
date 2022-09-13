@@ -153,7 +153,14 @@ where
 		let digest = Decode::decode(input)?;
 		let app_data_lookup = Decode::decode(input)?;
 
-		Ok(Self { parent_hash, number, state_root, extrinsics_root, digest, app_data_lookup })
+		Ok(Self {
+			parent_hash,
+			number,
+			state_root,
+			extrinsics_root,
+			digest,
+			app_data_lookup,
+		})
 	}
 }
 
