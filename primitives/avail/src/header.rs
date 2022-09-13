@@ -76,6 +76,7 @@ pub struct Header<Number: HeaderNumberTrait, Hash: KateHashTrait> {
 	pub parent_hash: Hash::Output,
 	/// The block number.
 	#[cfg_attr(feature = "std", serde(with = "number_serde"))]
+	#[codec(compact)]
 	pub number: Number,
 	/// The state trie merkle root
 	pub state_root: Hash::Output,
