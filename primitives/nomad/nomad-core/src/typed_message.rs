@@ -2,6 +2,8 @@ use core::{convert::TryFrom, mem};
 
 use sp_std::vec::Vec;
 
+use frame_support::BoundedVec;
+
 /// This trait provides structure for encoding a Vec<u8> as a xapp message.
 /// First byte of Vec<u8> is a u8 corresponding to a message type. The remaining
 /// bytes make up the message body.

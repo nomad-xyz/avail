@@ -106,6 +106,8 @@ mod test {
 		let body: DABridgeMessages = message.into();
 		let bounded: BoundedVec<u8, MaxMessageBodyBytes> = body.encode().try_into().unwrap();
 
+		let block_number: u32 = block_number.into();
+		let block_number_bytes = block_number.to_be_bytes();
 		let nomad_msg = NomadMessage {
 			origin: 0,
 			sender: Default::default(),
