@@ -103,3 +103,34 @@ mod tests {
 		assert_eq!(message.to_vec().len(), NON_BODY_LENGTH + 32);
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use core::convert::TryInto;
+
+	use frame_support::{parameter_types, BoundedVec};
+
+	use super::NON_BODY_LENGTH;
+	use crate::NomadMessage;
+
+	parameter_types! {
+		const MaxBodyLen :u32 = 1024;
+	}
+
+	#[test]
+	fn formats_message_to_vec() {
+		let body = [1u8; 32];
+		let bounded: BoundedVec<u8, MaxBodyLen> = body.to_vec().try_into().unwrap();
+
+		let message = NomadMessage {
+			origin: 0,
+			sender: Default::default(),
+			nonce: 0,
+			destination: 0,
+			recipient: Default::default(),
+			body: bounded,
+		};
+
+		assert_eq!(message.to_vec().len(), NON_BODY_LENGTH + 32);
+	}
+}
